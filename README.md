@@ -89,9 +89,27 @@ Trae 客户端本身显示的用量来自官方接口，所以脚本要做的其
 - 客户端 `main.log` 里的登录态 access token
 - webview leveldb 里的 `Cloud-IDE-Token`
 - `~/.trae-cn/trae-jwt-token` 临时 token 文件
-- `User/globalStorage/storage.json` 里加密的 `iCubeAuthInfo://*`（用客户端内置的掩码常量表解 AES-128-CBC）
+- `User/globalStorage/storage.json` 里加密的 `iCubeAuthInfo://*`（解 AES-128-CBC，**需要自备常量表，见下**）
 
 > 📌 **哪天突然抓不到数了，先搜 AI agent 的 `*_stdout.log`**——历史上两次断档都是靠翻这类日志重新打通的。
+
+### ⚠️ 自备 `trae_crypto_table.py`（Trae 用户必看）
+
+上面最后一条是**目前最稳定**的凭证来源，但它要解客户端自己加密的 UserStorage，
+而解密要用的四张掩码常量表是 Trae **客户端源码里的内置常量**——
+出于对商业软件内部实现细节的尊重，**本仓库不分发**它们，改成由使用者自备：
+
+```bash
+cp trae_crypto_table.py.example trae_crypto_table.py   # 复制模板，然后自己填值
+```
+
+- **没有这个文件脚本照样能跑**，只是跳过这条来源、退回其它候选路径（不会报错）
+- **填了才启用主力来源**。跑 `python trae_fetch.py --check` 能看到是否生效
+- 该文件已被 `.gitignore` 排除，不会误提交
+
+取值方法：从你本机 Trae 客户端安装目录找到 `byteCrypto.js`（或等价的混淆产物），
+定位 `ule` / `dle` / `cle` / `lle` 四个各 64 字节的数组，填进模板即可。
+客户端大版本升级后格式可能变，届时 `--check` 会提示解不出来，重新校准常量就行。
 
 ### 调的接口
 
@@ -146,6 +164,12 @@ Trae 那一份会多带套餐额度（`entitlements`）相关的字段。
 确认 `~/.workbuddy/projects/` 下有 `.jsonl`、且 `~/.workbuddy/workbuddy.db` 存在。
 没有的话说明 WorkBuddy 装在了别的用户目录，或者还没产生过会话。
 
+**Q：`trae_fetch.py --check` 说「没有接口实测可用的凭证」？**
+
+先看输出里有没有「本机没有 trae_crypto_table.py」这行——**有的话先解决它**，
+按上文[自备 `trae_crypto_table.py`](#-自备-trae_crypto_tablepytrae-用户必看)处理，这是最常见的原因。
+没有的话，再确认客户端处于登录状态，必要时退出登录重登一次。
+
 **Q：能定时跑吗？**
 
 可以。Windows 上建个计划任务，或者写个 `.bat` 调这两个脚本。注意用**绝对路径**指向 Python 解释器，
@@ -165,6 +189,8 @@ Trae 那一份会多带套餐额度（`entitlements`）相关的字段。
 和未公开的内部接口，这些东西**随时可能因为官方改版而失效**（Trae 就变过好几次）。
 
 - 本项目与 WorkBuddy / Trae 官方**无任何关联**，也不是官方认可的工具。
+- 仓库**不含**任何 Trae / WorkBuddy 的源码或二进制片段。解密所需的客户端常量由使用者
+  **自行从本机客户端提取**（见上文），本项目只提供模板、**不分发**这些常量。
 - 请勿用于绕过付费、篡改计费或任何违反上述产品服务条款的用途；仅用于查看你自己的用量。
 - 接口失效属正常现象，欢迎提 issue / PR 一起维护，但别指望它永远可用。
 

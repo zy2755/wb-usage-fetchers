@@ -4,6 +4,10 @@
 *-data.js
 *.json
 
+# 自备的客户端常量表：含商业软件内部常量，不入库（只入库 .example 模板）
+trae_crypto_table.py
+!trae_crypto_table.py.example
+
 # Python
 __pycache__/
 *.py[cod]

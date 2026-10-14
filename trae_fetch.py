@@ -202,10 +202,21 @@ for _i, _v in enumerate(_AES_SBOX):
 _RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
 
 # 客户端内置的掩码常量表（byteCrypto.js 里的 ule / dle / cle / lle）
-_BC_ULE = bytes([82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 163, 158, 129, 243, 215, 251, 124, 227, 57, 130, 155, 47, 255, 135, 52, 142, 67, 68, 196, 222, 233, 203, 84, 123, 148, 50, 166, 194, 35, 61, 238, 76, 149, 11, 66, 250, 195, 78, 8, 46, 161, 102, 40, 217, 36, 178, 118, 91, 162, 73, 109, 139, 209, 37])
-_BC_DLE = bytes([31, 221, 168, 51, 136, 7, 199, 49, 177, 18, 16, 89, 39, 128, 236, 95, 96, 81, 127, 169, 25, 181, 74, 13, 45, 229, 122, 159, 147, 201, 156, 239, 160, 224, 59, 77, 174, 42, 245, 176, 200, 235, 187, 60, 131, 83, 153, 97, 23, 43, 4, 126, 186, 119, 214, 38, 225, 105, 20, 99, 85, 33, 12, 125])
-_BC_CLE = bytes([191, 192, 216, 250, 122, 246, 220, 97, 31, 254, 98, 27, 8, 72, 71, 176, 135, 99, 96, 18, 127, 101, 203, 104, 211, 102, 191, 125, 37, 72, 150, 156, 51, 229, 121, 35, 17, 153, 141, 177, 110, 131, 150, 128, 172, 255, 254, 6, 18, 140, 55, 62, 236, 249, 135, 64, 135, 12, 117, 4, 89, 149, 168, 209])
-_BC_LLE = bytes([246, 204, 26, 232, 232, 70, 129, 109, 223, 146, 169, 242, 23, 241, 105, 145, 50, 196, 165, 42, 254, 120, 3, 54, 244, 207, 209, 85, 53, 6, 138, 106, 175, 148, 31, 204, 186, 186, 165, 182, 87, 142, 49, 10, 39, 110, 26, 154, 86, 56, 173, 125, 18, 64, 198, 225, 99, 99, 83, 82, 191, 134, 76, 170])
+#
+# ⚠️ 公开仓库不再内置这几张表。它们是 Trae 客户端 obfuscated 源码里的常量，
+#    属于商业软件的内部实现细节，再分发一次不合适。
+#    改成**运行时从同目录的 trae_crypto_table.py 导入** ——
+#    那个文件已被 .gitignore 排除，使用者按 trae_crypto_table.py.example
+#    自己从客户端源码里提取后填入即可。
+#
+#    导入失败也**不影响脚本运行**：只是会跳过「加密 UserStorage」这条凭证来源
+#    （见 collect_user_storage_tokens），其余候选来源照常扫描。
+try:
+    from trae_crypto_table import ULE, DLE, CLE, LLE
+    _BC_ULE, _BC_DLE, _BC_CLE, _BC_LLE = ULE, DLE, CLE, LLE
+    HAS_CRYPTO_TABLE = True
+except Exception:
+    HAS_CRYPTO_TABLE = False
 
 _BC_HH, _BC_NY, _BC_OO, _BC_EG = 64, 32, 64, 6     # 校验长 / 密钥材料长 / 掩码长 / 头部偏移
 
@@ -292,6 +303,9 @@ def decode_user_storage(b64):
        不去的话尾部会多出几个 0x05，SHA-512 校验永远对不上，
        看起来"密钥推错了"，其实是填充没剥。
     """
+    if not HAS_CRYPTO_TABLE:
+        return None          # 没有自备常量表 → 这条来源直接跳过，不报错
+
     try:
         raw = base64.b64decode(b64)
     except Exception:
@@ -348,6 +362,8 @@ def collect_user_storage_tokens(client):
     返回 [{"token", "path", "key", "expiredAt"}]。
     """
     out = []
+    if not HAS_CRYPTO_TABLE:
+        return out                  # 没自备常量表，这条来源整体跳过
     path = os.path.join(client, "User", "globalStorage", "storage.json")
     if not os.path.isfile(path):
         return out
@@ -361,7 +377,10 @@ def collect_user_storage_tokens(client):
     for k, v in store.items():
         if not k.startswith("iCubeAuthInfo://") or not isinstance(v, str):
             continue
-        txt = decode_user_storage(v)
+        try:
+            txt = decode_user_storage(v)
+        except Exception:
+            txt = None              # 自备常量表填错（长度/类型不对）时别让整个脚本崩掉
         if not txt:
             continue
         try:
@@ -883,6 +902,10 @@ def main():
                     print("      登录态自检: ? 无法判定（%s）" % c["login_detail"])
         if winner is None:
             print("\n  [×] 没有「接口实测可用」的凭证。")
+            if not HAS_CRYPTO_TABLE:
+                print("  → ① 先查这个：本机没有 trae_crypto_table.py，"
+                      "「加密 UserStorage」这条主力来源已被跳过。")
+                print("     复制 trae_crypto_table.py.example 并按 README 自备常量表即可启用。")
             if any(c.get("logged_in") is False for c in cands):
                 print("  → 原因：能读到的凭证都「登录态失效」了（CheckLogin IsLogin=false）。")
                 print("  → 处理：打开 Trae 客户端 → 确认已登录；若还不行，退出登录再重新登录一次。")

@@ -1,0 +1,36 @@
+# -*- coding: utf-8 -*-
+r"""
+模板文件 —— 复制成 trae_crypto_table.py 后填入你自己提取的值
+==============================================================
+
+本文件**故意不定义** ULE / DLE / CLE / LLE，这样直接拿它当正式模块用也不会生效：
+trae_fetch.py 导入失败 → HAS_CRYPTO_TABLE = False → 自动跳过「加密 UserStorage」
+这条凭证来源，脚本其余功能照常。
+
+为什么要外置
+------------
+这四张表（各 64 字节）是 Trae 客户端 obfuscated 源码 `byteCrypto.js` 里的内置常量，
+属于商业软件的内部实现细节。本项目**不分发**它们——公开仓库里只给模板，
+要用的人自己从本机客户端提取。
+
+它们的关系（decode_user_storage 里用到）：
+    ver == 2 → mask[i] = CLE[i] ^ LLE[i]
+    ver == 1 → mask[i] = ULE[i] ^ DLE[i]
+
+怎么填
+------
+1. 复制本文件为 `trae_crypto_table.py`（同目录）
+2. 从你本机 Trae 客户端的安装目录里找到 `byteCrypto.js`（或等价的混淆产物），
+   定位 ule / dle / cle / lle 四个常量数组
+3. 把四个数组各 64 个字节填进下面的 ULE / DLE / CLE / LLE
+4. 跑 `python trae_fetch.py --check` 验证：能解出 iCubeAuthInfo:// 条目即成功
+
+⚠️ trae_crypto_table.py **已在 .gitignore 中排除**，不会进 git，别手动 git add -f。
+"""
+
+# ↓↓↓ 把下面四行取消注释，并替换成你提取到的 64 字节数组 ↓↓↓
+#
+# ULE = bytes([...])   # 64 字节
+# DLE = bytes([...])   # 64 字节
+# CLE = bytes([...])   # 64 字节
+# LLE = bytes([...])   # 64 字节
