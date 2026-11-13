@@ -86,7 +86,9 @@ API_CHECKLOGIN = "/cloudide/api/v3/trae/CheckLogin"
 IDE_VERSION = "3.4.2"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT_JS = os.path.join(HERE, "trae-data.js")
+# 产物目录：默认与脚本同目录；exe 版由启动器用 WB_DATA_DIR 指到 exe 旁边
+#（PyInstaller 单文件运行时 __file__ 在临时解包目录里，写到那儿等于丢）。
+OUT_JS = os.path.join(os.environ.get("WB_DATA_DIR") or HERE, "trae-data.js")
 
 JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}")
 # 2026-10-12 曾靠它打通：新版客户端把 main.log 里的 token 全掩码成 ******，

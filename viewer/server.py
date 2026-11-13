@@ -36,8 +36,28 @@ import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
-# viewer/ 的上级 = 仓库根（三个数据文件和三个脚本都在这里）
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 资源根（页面文件）与数据根（*-data.js、自备的 credits_auth.py）要分开：
+#   - 源码运行：两者都是仓库根 —— 页面在 <root>/viewer/，数据在 <root>/*-data.js；
+#   - 打包成 exe：页面被 PyInstaller 放进临时解包目录（sys._MEIPASS），
+#     而数据必须留在 exe 旁边 —— 那里才有用户自己的 *-data.js 和自备凭证模块。
+#     若混成一个根，页面能打开但永远读不到 exe 旁边的数据。
+FROZEN = bool(getattr(sys, "frozen", False))
+_ENV_DATA = os.environ.get("WB_DATA_DIR")
+
+if _ENV_DATA:
+    DATA_ROOT = os.path.abspath(_ENV_DATA)
+elif FROZEN:
+    DATA_ROOT = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    DATA_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+if FROZEN:
+    ASSET_ROOT = getattr(sys, "_MEIPASS",
+                         os.path.dirname(os.path.abspath(sys.executable)))
+else:
+    ASSET_ROOT = DATA_ROOT
+
+ROOT = DATA_ROOT          # 兼容旧变量名：状态接口与日志里显示的都是数据根
 PAGE = "/viewer/index.html"
 
 # 本机动态端口范围被改成过 1024~15000，落在里面的端口随时可能被系统
@@ -51,6 +71,10 @@ SCRIPTS = [
     ("trae_fetch.py", "Trae 用量", "trae-data.js"),
     ("credits_alert.py", "积分到期预警", "credits-data.js"),
 ]
+
+# 这三个是「数据文件」，请求它们时要走 DATA_ROOT（exe 旁边），
+# 其余路径都是页面资源，走 ASSET_ROOT（打包进 exe 的只读资源）。
+DATA_FILES = {data for _s, _l, data in SCRIPTS}
 
 ALLOW_REFRESH = True
 
@@ -67,10 +91,31 @@ def decode_bytes(raw):
     return raw.decode("utf-8", "replace")
 
 
+def summarize_output(lines, limit=600):
+    """把子进程输出压成一行摘要。
+
+    traceback 的关键信息在**最后一行**（异常类型 + 消息），前面几行只是 importlib
+    的框架帧。直接按 [:limit] 截断会把最有用的那行切掉 —— 实测查 exe 里的 import
+    失败时就只剩一串 "File <frozen importlib...>"，看不到到底抛了什么。
+    所以超长时保留「首行 + 末行」，中间用 … 省略。
+    """
+    if not lines:
+        return ""
+    tail = lines[-6:]
+    text = " | ".join(tail)
+    if len(text) <= limit:
+        return text
+    head, last = tail[0], tail[-1]
+    room = limit - len(last) - 5
+    if room > 20:
+        return (head[:room] + " … | " + last)[:limit]
+    return last[-limit:]          # 末行自己就超长：只留它，从左边切
+
+
 def status_payload():
     out = []
     for _script, label, data in SCRIPTS:
-        p = os.path.join(ROOT, data)
+        p = os.path.join(DATA_ROOT, data)
         if os.path.isfile(p):
             out.append({
                 "name": label, "file": data, "exists": True,
@@ -84,17 +129,37 @@ def status_payload():
     # 把 home 和 dbExists 一起回出来，排障时一眼能看出是不是路径/权限问题。
     home = os.path.expanduser("~")
     db = os.path.join(home, ".workbuddy", "workbuddy.db")
-    return {"ok": True, "root": ROOT, "home": home,
-            "dbExists": os.path.isfile(db), "data": out}
+    return {"ok": True, "root": DATA_ROOT, "frozen": FROZEN,
+            "home": home, "dbExists": os.path.isfile(db), "data": out}
+
+
+def script_command(script):
+    """返回「怎么跑某个抓取脚本」的命令行。
+
+    源码运行：直接执行 .py。
+    exe 里没有 .py 文件，改成让 exe 自己带 --run 再跑一遍 —— 仍是**独立子进程**，
+    好处跟原来一样：某个抓取脚本崩了不会拖垮服务，输出也能被捕获。
+    """
+    if FROZEN:
+        return [sys.executable, "--run", script[:-3]]
+    return [sys.executable, script]
+
+
+def script_env():
+    """子进程环境：把数据目录传下去，让脚本把产物写在 exe 旁边而不是临时目录。"""
+    env = os.environ.copy()
+    env["WB_DATA_DIR"] = DATA_ROOT
+    env["PYTHONIOENCODING"] = "utf-8"     # 免得子进程按 GBK 输出、解码时打滑
+    return env
 
 
 def run_refresh():
     """依次重跑三个脚本。一家失败不影响另外两家，结果原样回给前端。"""
     results = []
     for script, label, data in SCRIPTS:
-        path = os.path.join(ROOT, script)
         t0 = time.time()
-        if not os.path.isfile(path):
+        # exe 版没有 .py 文件，存在性检查换成「模块是否已打进包里」，由启动器保证
+        if not FROZEN and not os.path.isfile(os.path.join(ASSET_ROOT, script)):
             results.append({"name": label, "ok": False, "seconds": 0,
                             "message": "找不到脚本 " + script})
             continue
@@ -102,21 +167,21 @@ def run_refresh():
             # 用 sys.executable 而不是 "python"：避免 PATH 里没有解释器 / 指向别的环境。
             # capture_output 不让子进程的中文输出直接打到 GBK 控制台上炸编码。
             proc = subprocess.run(
-                [sys.executable, script], cwd=ROOT,
+                script_command(script), cwd=DATA_ROOT, env=script_env(),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 timeout=180,
             )
             text = decode_bytes(proc.stdout).strip()
             lines = [x for x in text.splitlines() if x.strip()]
-            # 留 6 行：Python 报错时最后几行才是 traceback 的关键句
-            msg = " | ".join(lines[-6:])[:600]
+            msg = summarize_output(lines)
             if proc.returncode != 0 and "unable to open database file" in text:
                 # WorkBuddy 脚本读 ~/.workbuddy/workbuddy.db。文件「看得见但打不开」
                 # 常见于沙箱 / 安全软件拦截，sqlite 只会抛这一句，不说明是哪一步。
                 dbp = os.path.join(os.path.expanduser("~"), ".workbuddy", "workbuddy.db")
+                launcher = "积分台.exe" if FROZEN else "start-viewer.bat"
                 msg += (" | [提示] 服务进程打不开 %s（存在=%s）。多半是当前运行环境"
-                        "限制了读取本机 WorkBuddy 目录，请在普通命令行里双击 "
-                        "start-viewer.bat 启动服务再刷新。" % (dbp, os.path.isfile(dbp)))
+                        "限制了读取本机 WorkBuddy 目录，请直接双击 %s 启动（别在受限"
+                        "终端 / 沙箱里运行）再刷新。" % (dbp, os.path.isfile(dbp), launcher))
             results.append({
                 "name": label, "ok": proc.returncode == 0,
                 "seconds": round(time.time() - t0, 1),
@@ -137,9 +202,17 @@ def run_refresh():
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        # 静态根 = 仓库根，页面在 /viewer/index.html，数据在 /usage-data.js，
-        # 与 file:// 打开时用的 ../usage-data.js 相对路径刚好对得上。
-        super().__init__(*args, directory=ROOT, **kwargs)
+        # 静态根 = 资源根，页面在 /viewer/index.html。
+        # 源码运行时资源根就是仓库根，与 file:// 打开时用的 ../usage-data.js 相对路径也对得上。
+        super().__init__(*args, directory=ASSET_ROOT, **kwargs)
+
+    def translate_path(self, path):
+        # 数据文件必须从 DATA_ROOT 取（exe 版就是 exe 所在目录），
+        # 否则打包后页面能打开、却永远读不到 exe 旁边的 *-data.js。
+        clean = urlparse(path).path.lstrip("/")
+        if clean in DATA_FILES:
+            return os.path.join(DATA_ROOT, clean)
+        return super().translate_path(path)
 
     def log_message(self, fmt, *args):
         # 静态资源请求太多，只打印 API 调用，控制台干净点。
@@ -222,7 +295,10 @@ def main():
     print(" 积分台 · WorkBuddy & Trae")
     print("=" * 62)
     print(" 页面   : " + url)
-    print(" 数据根 : " + ROOT)
+    print(" 数据根 : " + DATA_ROOT)
+    if ASSET_ROOT != DATA_ROOT:
+        print(" 资源根 : " + ASSET_ROOT + "（打包内置）")
+    print(" 运行   : " + ("exe 单文件" if FROZEN else "Python 源码"))
     print(" 刷新   : " + ("已启用（页面右上角按钮）" if ALLOW_REFRESH else "已禁用"))
     for s in status_payload()["data"]:
         print("   - %-20s %s" % (s["file"], (s["mtime"] or "缺数据") if s["exists"] else "缺数据"))

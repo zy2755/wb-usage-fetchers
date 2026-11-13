@@ -26,7 +26,10 @@ HOME = os.path.expanduser("~")
 WB = os.path.join(HOME, ".workbuddy")
 PROJ_GLOB = os.path.join(WB, "projects", "**", "*.jsonl")
 DB = os.path.join(WB, "workbuddy.db")
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-data.js")
+# 产物写到哪：默认与脚本同目录。打包成 exe 后 __file__ 落在 PyInstaller 的临时解包目录，
+# 直接写会写进临时目录、进程一退就没了 —— 所以由启动器用 WB_DATA_DIR 指回 exe 所在目录。
+OUT = os.path.join(os.environ.get("WB_DATA_DIR") or os.path.dirname(os.path.abspath(__file__)),
+                   "usage-data.js")
 
 # ---------------------------------------------------------------- 工具函数
 def ts_to_dt(ts):

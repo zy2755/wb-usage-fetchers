@@ -61,7 +61,9 @@ import urllib.request
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT_JS = os.path.join(HERE, "credits-data.js")
+# 产物目录：默认与脚本同目录；exe 版由启动器用 WB_DATA_DIR 指到 exe 旁边
+#（PyInstaller 单文件运行时 __file__ 在临时解包目录里，写到那儿等于丢）。
+OUT_JS = os.path.join(os.environ.get("WB_DATA_DIR") or HERE, "credits-data.js")
 
 BROWSER_HEADERS = {
     "Accept-Language": "zh",
