@@ -71,7 +71,9 @@ python credits_alert.py --json credits.json    # 额外导出一份 JSON
 | `.gitignore` | 排除数据产物与所有自备凭证文件 |
 | `viewer/index.html` / `style.css` / `app.js` | 可视化软件界面（消耗看板 + 到期预警） |
 | `viewer/server.py` | 本地服务：托管页面 + 提供一键刷新接口 |
-| `start-viewer.bat` | Windows 双击启动（GBK + CRLF + 无 BOM） |
+| `viewer/launcher.py` | 可执行版入口：定数据目录、首次启动自动采集、内部命令 `--run` |
+| `start-viewer.bat` | Windows 双击启动源码版（GBK + CRLF + 无 BOM） |
+| `build-exe.bat` / `credits_viewer.spec` / `version_info.txt` | 打包单文件 exe 的构建脚本与配置 |
 | `LICENSE` | MIT |
 
 两个 `.example` 对应的正式文件都**不会**被提交；缺了它们脚本也不会崩，只是相应来源优雅跳过。
@@ -82,10 +84,11 @@ python credits_alert.py --json credits.json    # 额外导出一份 JSON
 
 把三份数据放在一个页面里看：**积分消耗看板**（已经花了多少）+ **积分到期预警**（还剩多少、哪笔先过期）。
 
-### 两种打开方式
+### 三种打开方式
 
 | 方式 | 怎么做 | 能做什么 |
 |---|---|---|
+| **最省事：单文件 exe** | 从 [Releases](https://github.com/zy2755/wb-usage-fetchers/releases) 下 `积分台.exe` 双击 | 不用装 Python，自带运行时；自动开浏览器、一键刷新 |
 | **推荐：本地服务** | 双击 `start-viewer.bat`（或 `python viewer/server.py`） | 自动开浏览器、右上角「↻ 刷新数据」一键重跑三个脚本 |
 | 直接看数据 | 双击 `viewer/index.html`（`file://`） | 图表、表格全部照常可用；刷新按钮自动隐藏，改完数据按 F5 |
 
@@ -99,6 +102,46 @@ python viewer/server.py --port 18791     # 换端口
 python viewer/server.py --no-open        # 不自动开浏览器
 python viewer/server.py --no-refresh     # 只托管静态页，禁用刷新接口
 ```
+
+### 打包成单文件 exe
+
+不想在目标机器装 Python，就用 exe 版。自己构建：
+
+```bat
+build-exe.bat
+:: 或指定一个装了 PyInstaller 的解释器
+set PYTHON=D:\Python3.13.15\python.exe
+build-exe.bat
+```
+
+产物 `dist\积分台.exe`，约 9.5 MB，单文件、自带 Python 运行时。
+
+打包后的位置关系是有意设计的，别随意挪：
+
+| 东西 | 放在哪 | 为什么 |
+|---|---|---|
+| 页面 html/css/js | 打进 exe，运行时解包到临时目录 | 只读资源，跟着 exe 走 |
+| `*-data.js` | **exe 旁边** | 真实用量数据；写进临时目录会随进程退出消失 |
+| `credits_auth.py` / `trae_crypto_table.py` | 可以放 **exe 旁边** | 启动器会把该目录加进 `sys.path`，自备模块照样能 import |
+
+启动流程：首次启动若发现三份数据都缺，先跑一遍采集再开页面；之后点「↻ 刷新数据」，
+exe 会**把自己再拉起一遍**（内部命令 `--run <模块>`）当独立子进程执行抓取脚本，
+保持「某个脚本崩了不拖垮服务」的特性。命令行参数：
+
+```bat
+积分台.exe --port 18791        换端口
+积分台.exe --no-open           不自动开浏览器
+积分台.exe --data-dir D:\data  数据放到别处
+积分台.exe --version           看版本
+```
+
+⚠️ 两个现实问题：
+
+- 未签名的 PyInstaller 产物可能被杀软（火绒等）或 SmartScreen 拦一次，加信任即可。
+  介意的话把 spec 改成 `onedir` 自行打包（目录版更少被误报）。
+- 必须在**普通桌面环境**里双击运行。若在受限终端 / 沙箱里启动，读
+  `~/.workbuddy/workbuddy.db` 会报 `unable to open database file`，刷新时
+  WorkBuddy 那一路会失败（页面和接口都会给出提示）。
 
 ### 页面里有什么
 
@@ -455,6 +498,19 @@ window.WB_USAGE = {
 解释器（计划任务的环境里经常没有 `PATH`），bat 用 GBK + 无 BOM + CRLF。
 想在到期前主动提醒，给 `credits_alert.py` 加 `--alert-exit-code`，用退出码 2 触发通知。
 
+**Q：双击 exe 后页面是空的 / 数据不更新？**
+
+1. 首次启动会先采集一次，控制台里能看到进度；如果它一闪就过去了，手动点页面右上角「↻ 刷新数据」。
+2. exe 所在目录**必须可写**（`*-data.js` 就写在它旁边）。放在 `C:\Program Files\` 这类目录会写不出数据，
+   换个目录或加 `--data-dir D:\data`。
+3. 想看它到底认哪个目录：浏览器开 `http://127.0.0.1:18790/api/status`，`root` 就是数据目录，
+   `frozen: true` 表示跑的是 exe。
+
+**Q：exe 被杀软拦了 / SmartScreen 提示未知发布者？**
+
+未签名单文件容易误报，本质是 PyInstaller 的自解压行为。加信任即可；
+想避免就自己用 `onedir` 模式打包（改成目录版，误报少很多），或直接跑源码版。
+
 ---
 
 ## 本次更新（2026-11-13）
@@ -474,6 +530,9 @@ window.WB_USAGE = {
   深浅主题、筛选搜索；`viewer/server.py` 本地服务提供一键刷新；`start-viewer.bat` 双击启动。
 - **新增** `viewer/report.js` + 两个按钮：「⬇ 导出 PNG」生成固定浅色的 SVG 报表图并光栅化下载，
   「🖨 打印 / PDF」用 `@media print` 把两个标签排成 A4 两页（浏览器另存为 PDF）。
+- **新增** 单文件 exe 打包：`viewer/launcher.py`（入口）+ `credits_viewer.spec` +
+  `version_info.txt` + `build-exe.bat`，产物 `dist\积分台.exe`（约 9.5 MB，自带运行时）。
+  三个脚本的产物目录改为可用 `WB_DATA_DIR` 覆盖，打包后数据仍写在 exe 旁边。
 - **修复** 头部按钮在临界视口宽度 / 滚动条出现时整块换行：时间戳移出按钮组独立一行、
   标题块可收缩而按钮组不换行、加 `scrollbar-gutter: stable` 预留滚动条槽位。
 - **加固** `credits_alert.py`：某家临时取不到数时沿用上一次成功的数据并标 `stale`，
