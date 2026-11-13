@@ -1,0 +1,338 @@
+/* 积分台 · 本地可视化页面样式
+   ------------------------------------------------------------------
+   全部颜色走 CSS 变量，深浅两套只在下面两处定义：
+     ① 默认浅色；② 跟随系统深色 / 手动深色（html[data-theme="dark"]）。
+   SVG 图表用 style="fill:var(--xxx)" 引用同一批变量，切主题时会跟着变，
+   不需要 JS 重绘 —— 这也是本页不引任何图表库、纯手绘 SVG 的前提。
+   ------------------------------------------------------------------ */
+:root {
+  --bg: #f2f5fb;
+  --bg2: #e6ecf8;
+  --card: rgba(255, 255, 255, .92);
+  --card-solid: #ffffff;
+  --border: rgba(24, 38, 72, .10);
+  --border-strong: rgba(24, 38, 72, .18);
+  --text: #18213a;
+  --text2: #41506b;
+  --muted: #7c889e;
+  --wb: #4f6ef7;
+  --trae: #f0913f;
+  --accent: #4f6ef7;
+  --accent-soft: rgba(79, 110, 247, .10);
+  --danger: #e0453f;
+  --danger-soft: rgba(224, 69, 63, .12);
+  --warn: #dd8a12;
+  --warn-soft: rgba(221, 138, 18, .14);
+  --ok: #2a9a63;
+  --ok-soft: rgba(42, 154, 99, .12);
+  --grid: rgba(24, 38, 72, .08);
+  --shadow: 0 10px 30px -14px rgba(24, 38, 72, .24);
+  --radius: 16px;
+}
+html[data-theme="light"] { /* 手动锁浅色：沿用 :root 的值，空规则仅为明确意图 */ }
+html[data-theme="dark"] {
+  --bg: #0f1522;
+  --bg2: #151d2e;
+  --card: rgba(27, 35, 51, .92);
+  --card-solid: #1b2333;
+  --border: rgba(255, 255, 255, .10);
+  --border-strong: rgba(255, 255, 255, .18);
+  --text: #e9eef8;
+  --text2: #b9c5da;
+  --muted: #8896ad;
+  --wb: #7d95ff;
+  --trae: #f5a95f;
+  --accent: #7d95ff;
+  --accent-soft: rgba(125, 149, 255, .14);
+  --danger: #ff7069;
+  --danger-soft: rgba(255, 112, 105, .14);
+  --warn: #eeb055;
+  --warn-soft: rgba(238, 176, 85, .15);
+  --ok: #58c794;
+  --ok-soft: rgba(88, 199, 148, .14);
+  --grid: rgba(255, 255, 255, .10);
+  --shadow: 0 12px 34px -16px rgba(0, 0, 0, .6);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1522; --bg2: #151d2e;
+    --card: rgba(27, 35, 51, .92); --card-solid: #1b2333;
+    --border: rgba(255, 255, 255, .10); --border-strong: rgba(255, 255, 255, .18);
+    --text: #e9eef8; --text2: #b9c5da; --muted: #8896ad;
+    --wb: #7d95ff; --trae: #f5a95f; --accent: #7d95ff;
+    --accent-soft: rgba(125, 149, 255, .14);
+    --danger: #ff7069; --danger-soft: rgba(255, 112, 105, .14);
+    --warn: #eeb055; --warn-soft: rgba(238, 176, 85, .15);
+    --ok: #58c794; --ok-soft: rgba(88, 199, 148, .14);
+    --grid: rgba(255, 255, 255, .10);
+    --shadow: 0 12px 34px -16px rgba(0, 0, 0, .6);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+/* 内容渲染完出现滚动条时，视口宽度会少十几像素。预留滚动条槽位，
+   页面就不会因为「滚动条有/无」而重排 —— 头部按钮位置也跟着稳住。 */
+html { scrollbar-gutter: stable; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(900px 420px at 8% -10%, var(--accent-soft) 0%, transparent 60%),
+    radial-gradient(760px 380px at 96% 2%, var(--warn-soft) 0%, transparent 58%),
+    linear-gradient(160deg, var(--bg) 0%, var(--bg2) 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 34px 20px 64px; }
+
+/* ------------------------------- 头部 ------------------------------- */
+.header { margin-bottom: 22px; }
+/* 关键：这里不能 wrap。原先「标题 + 时间戳 + 四个按钮」刚好卡在临界宽度，
+   视口窄几十像素或出现滚动条时，右侧整块就掉到标题下面。
+   现在标题块可收缩、按钮组不收缩，宽窄屏都保持同一行。 */
+.header-main {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 20px; flex-wrap: nowrap;
+}
+.header-title { min-width: 0; flex: 1 1 auto; }
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 600;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+h1 { margin: 8px 0 6px; font-size: 30px; line-height: 1.2; letter-spacing: -.02em; }
+.brand { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 8px; letter-spacing: 0; }
+.sub { margin: 0; color: var(--text2); font-size: 13.5px; line-height: 1.7; }
+.sub strong { color: var(--text); }
+.header-actions {
+  display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto; flex-wrap: nowrap; white-space: nowrap;
+}
+/* 时间戳从按钮组里移出来，独立占一行，长度再变也挤不到按钮 */
+.stamp {
+  display: block; font-size: 11.5px; color: var(--muted);
+  line-height: 1.6; text-align: right; margin-top: 8px;
+}
+.stamp .stale { color: var(--warn); font-weight: 600; }
+.btn {
+  border: 1px solid var(--border-strong); background: var(--card-solid); color: var(--text);
+  border-radius: 10px; padding: 8px 13px; font-size: 13px; cursor: pointer;
+  font-family: inherit; transition: transform .12s ease, box-shadow .12s ease;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+.btn:disabled { opacity: .6; cursor: wait; transform: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ghost { background: transparent; }
+.file-hint {
+  margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 12.5px;
+  color: var(--text2); background: var(--accent-soft); border: 1px solid var(--border);
+}
+code { font-family: "Cascadia Code", Consolas, "SFMono-Regular", monospace; font-size: .92em; color: var(--accent); }
+
+/* ------------------------------- 标签 ------------------------------- */
+.tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.tab {
+  appearance: none; border: 0; background: transparent; color: var(--muted);
+  font-family: inherit; font-size: 14.5px; font-weight: 600; padding: 11px 18px;
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.badge {
+  display: inline-block; min-width: 18px; padding: 1px 6px; margin-left: 4px;
+  border-radius: 9px; font-size: 11px; font-weight: 700;
+  background: var(--danger); color: #fff; vertical-align: 1px;
+}
+.tab-panel { animation: fade .22s ease; }
+@keyframes fade { from { opacity: .35; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* ---------------------------- 卡片 / 布局 ---------------------------- */
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px; min-width: 0;
+}
+.grid-2 > .card { margin-bottom: 0; }
+.card h2 { margin: 0 0 4px; font-size: 16px; letter-spacing: -.01em; }
+.card h2.mt { margin-top: 26px; }
+.h2-note { font-size: 11.5px; font-weight: 500; color: var(--muted); margin-left: 6px; }
+.card-note { margin: 0 0 14px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.card-head > div:first-child { min-width: 0; }
+
+.kpi { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 17px 18px; box-shadow: var(--shadow); }
+.kpi .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.kpi .value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.kpi .value small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+.kpi .tip { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
+.kpi.warn .value { color: var(--warn); }
+.kpi.danger .value { color: var(--danger); }
+
+/* ------------------------------ 控件 ------------------------------ */
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 9px; overflow: hidden; flex-shrink: 0; }
+.seg button {
+  border: 0; background: transparent; color: var(--text2); font-family: inherit;
+  font-size: 12px; padding: 6px 11px; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.filters select, .filters input {
+  font-family: inherit; font-size: 12.5px; color: var(--text);
+  background: var(--card-solid); border: 1px solid var(--border-strong);
+  border-radius: 9px; padding: 7px 10px; outline: none;
+}
+.filters input { min-width: 190px; }
+.filters select:focus, .filters input:focus { border-color: var(--accent); }
+
+/* ------------------------------ 图表 ------------------------------ */
+.chart { width: 100%; min-height: 230px; margin: 6px 0 2px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .gridline { stroke: var(--grid); stroke-width: 1; }
+.chart .axis-label { fill: var(--muted); font-size: 10px; }
+.chart .bar { transition: opacity .15s ease; }
+.chart .bar:hover { opacity: .72; }
+.legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--text2); margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-note { margin-left: auto; color: var(--muted); }
+.sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
+.sw-wb { background: var(--wb); } .sw-trae { background: var(--trae); }
+.sw-urgent { background: var(--danger); } .sw-warn { background: var(--warn); } .sw-normal { background: var(--wb); }
+
+/* --------------------------- 对比 / 排行 --------------------------- */
+.compare-row { margin-bottom: 18px; }
+.compare-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-bottom: 7px; }
+.compare-top b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.bar-track { height: 9px; border-radius: 6px; background: var(--grid); overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 6px; }
+.compare-meta { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+.notes { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text2); line-height: 1.85; }
+.notes li { margin-bottom: 3px; }
+.rank-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 12.5px; }
+.rank-name { width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text2); }
+.rank-bar { flex: 1; height: 8px; border-radius: 5px; background: var(--grid); overflow: hidden; }
+.rank-bar > i { display: block; height: 100%; border-radius: 5px; background: var(--accent); }
+.rank-val { width: 74px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ------------------------------ 表格 ------------------------------ */
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tbl th {
+  text-align: left; font-weight: 600; color: var(--muted); font-size: 11.5px;
+  padding: 9px 10px; border-bottom: 1px solid var(--border-strong); white-space: nowrap;
+}
+.tbl td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl tbody tr:hover { background: var(--accent-soft); }
+.tbl .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tbl .clip { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+.tbl .mono { color: var(--muted); font-size: 11.5px; }
+.pill {
+  display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.pill.wb { background: var(--accent-soft); color: var(--accent); }
+.pill.trae { background: var(--warn-soft); color: var(--warn); }
+.pill.urgent, .pill.expired { background: var(--danger-soft); color: var(--danger); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.normal { background: var(--ok-soft); color: var(--ok); }
+.pill.unknown { background: var(--grid); color: var(--muted); }
+.empty { text-align: center; color: var(--muted); font-size: 13px; padding: 26px 0; }
+
+/* --------------------------- 预警专属 --------------------------- */
+.banner {
+  border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px;
+  font-size: 13.5px; line-height: 1.7; border: 1px solid var(--border);
+  background: var(--card); box-shadow: var(--shadow);
+}
+.banner.urgent { border-color: var(--danger); background: var(--danger-soft); }
+.banner.warn { border-color: var(--warn); background: var(--warn-soft); }
+.banner b { font-variant-numeric: tabular-nums; }
+.balance { padding: 20px; }
+.balance-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
+.balance-head h2 { margin: 0; font-size: 16px; }
+.balance-num { font-size: 27px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.balance-num small { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+.balance-meta { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+.balance-track { height: 10px; border-radius: 6px; background: var(--grid); overflow: hidden; margin: 4px 0 0; }
+.balance-used { height: 100%; background: var(--accent); border-radius: 6px; }
+.balance-soon { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text2); line-height: 1.7; }
+.balance-soon b { color: var(--text); }
+.balance-err { font-size: 12.5px; color: var(--danger); line-height: 1.7; }
+/* 某家临时失败、沿用上次数据时的提示，别把旧数当成新数 */
+.stale-note { margin-top: 9px; font-size: 12px; color: var(--warn); line-height: 1.6; }
+.stale-inline { color: var(--warn); font-size: 11.5px; }
+
+/* ------------------------------ 页脚 ------------------------------ */
+.footer { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); line-height: 1.8; }
+.footer p { margin: 0 0 4px; }
+
+/* ---------------------------- 响应式 ---------------------------- */
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+  .grid-2 { grid-template-columns: 1fr; }
+  .grid-2 > .card { margin-bottom: 16px; }
+  /* 手机/窄窗口才允许按钮换行，这时换行是预期布局而非抖动 */
+  .header-main { flex-wrap: wrap; }
+  .header-actions { flex-wrap: wrap; }
+  .stamp { text-align: left; }
+}
+@media (max-width: 560px) {
+  .wrap { padding: 22px 12px 48px; }
+  h1 { font-size: 24px; }
+  .brand { display: block; margin: 4px 0 0; }
+  .kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpi { padding: 14px; }
+  .kpi .value { font-size: 21px; }
+  .card { padding: 16px; }
+  .filters input { min-width: 130px; }
+  .rank-name { width: 46%; }
+}
+
+/* ---------------------------- 打印 / 另存 PDF ----------------------------
+   用浏览器原生打印（不做任何 PDF 库）：把两个标签都展开、控件藏掉、
+   图表压到 A4 能容纳的高度，并强制打印背景色，否则堆叠柱会变成空白。
+   ---------------------------------------------------------------------- */
+@page { size: A4; margin: 12mm; }
+.print-head { display: none; }
+
+@media print {
+  html, body { background: #fff !important; }
+  .wrap { max-width: none; padding: 0; }
+  .print-head {
+    display: block !important; font-size: 11.5px; color: #41506b;
+    margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #dfe6f2;
+  }
+  /* 屏幕上 hidden 的第二个标签，打印时照样输出；两个标签各起一页 */
+  .tab-panel[hidden] { display: block !important; }
+  #tab-alert { break-before: page; page-break-before: always; }
+
+  .header { margin-bottom: 10px; }
+  .eyebrow, .sub, .header-actions, .stamp, .tabs, .filters, .seg, .file-hint, .footer {
+    display: none !important;
+  }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .brand { font-size: 12px; }
+
+  .kpis { grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .card, .kpi, .banner {
+    box-shadow: none !important; border: 1px solid #dfe6f2 !important;
+    background: #fff !important; padding: 12px; margin-bottom: 10px;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  .card h2 { font-size: 13px; }
+  .kpi .value { font-size: 19px; }
+  .chart { min-height: 0; }
+  .chart svg { max-height: 180px; }
+  .table-wrap { overflow: visible; }
+  .tbl { font-size: 9.5px; }
+  .tbl th, .tbl td { padding: 5px 6px; }
+  .tbl .clip { max-width: 190px; }
+  .card-note, .notes, .rank-row { break-inside: avoid; }
+  /* 关键：不加这句，Chrome/Edge 打印默认会丢掉柱状图的填充色 */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>积分台 · WorkBuddy &amp; Trae</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 打印专用抬头：屏幕上隐藏，@media print 里显示，内容由 app.js 在 beforeprint 填 -->
+  <div id="printHead" class="print-head" hidden></div>
+
+  <header class="header">
+    <div class="header-main">
+      <div class="header-title">
+        <div class="eyebrow"><span class="dot"></span> 本地可视化 · 数据不出本机</div>
+        <h1>积分台 <span class="brand">WorkBuddy &amp; Trae</span></h1>
+        <p class="sub">两本账：一本记录<strong>已经花掉</strong>的积分，一本盯住<strong>还剩多少、什么时候过期</strong>。</p>
+      </div>
+      <div class="header-actions">
+        <button id="themeBtn" class="btn ghost" type="button">◐ 夜间</button>
+        <button id="pngBtn" class="btn ghost" type="button" title="导出一张 1200×1560 的 PNG 报表">⬇ 导出 PNG</button>
+        <button id="printBtn" class="btn ghost" type="button" title="用浏览器打印对话框另存为 PDF（A4，两个标签分两页）">🖨 打印 / PDF</button>
+        <button id="refreshBtn" class="btn primary" type="button">↻ 刷新数据</button>
+      </div>
+    </div>
+    <!-- 数据时间戳独立一行：它比按钮长得多，放在按钮组里会把整组挤到临界宽度，
+         视口窄几十像素 / 出现滚动条时整块就换行了。移出来后按钮组永远不被挤。 -->
+    <div id="stamp" class="stamp" title="各数据源的采集时间"></div>
+    <div id="fileHint" class="file-hint" hidden>
+      当前是 <code>file://</code> 直接打开：数据与图表照常可用，但「一键刷新」需要
+      双击 <code>启动看板.bat</code> 用本地服务打开。改完数据后按 F5 即可。
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="usage" type="button" role="tab">积分消耗看板</button>
+    <button class="tab" data-tab="alert" type="button" role="tab">
+      积分到期预警 <span id="alertBadge" class="badge" hidden></span>
+    </button>
+  </nav>
+
+  <!-- ============================ 标签 1：积分消耗 ============================ -->
+  <section id="tab-usage" class="tab-panel">
+    <div id="kpis" class="kpis"></div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>每日积分消耗</h2>
+            <p class="card-note">堆叠柱：下层 WorkBuddy、上层 Trae；按窗口内逐轮 <code>credit</code> 求和</p>
+          </div>
+          <div class="seg" id="rangeSeg">
+            <button type="button" data-days="7">7 天</button>
+            <button type="button" data-days="30" class="on">30 天</button>
+            <button type="button" data-days="0">全部</button>
+          </div>
+        </div>
+        <div id="trendChart" class="chart"></div>
+        <div class="legend">
+          <span><i class="sw sw-wb"></i> WorkBuddy</span>
+          <span><i class="sw sw-trae"></i> Trae</span>
+          <span class="legend-note" id="trendNote"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>两家对比</h2>
+        <p class="card-note">窗口内的累计消耗、逐轮次数与单次均值</p>
+        <div id="compare" class="compare"></div>
+        <h2 class="mt">口径提示</h2>
+        <ul class="notes">
+          <li>WorkBuddy 的积分取本地账本 <code>credit_json</code>，漏记的轮次由运行日志兜底；不按 token 反推。</li>
+          <li>Trae 的积分直接取官方账单接口的 <code>credits_float</code>；套餐额度是另一套口径，别混着比。</li>
+          <li>两家的「一分」不是同一种东西，<strong>合计只用于看趋势</strong>，不要跨家比单价。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>模型 TOP 5 <span class="h2-note">按积分</span></h2>
+        <div id="topModels" class="rank"></div>
+      </div>
+      <div class="card">
+        <h2>项目 TOP 5 <span class="h2-note">按积分</span></h2>
+        <div id="topProjects" class="rank"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>逐轮明细 <span class="h2-note" id="detailCount"></span></h2>
+          <p class="card-note">按时间倒序，默认显示最近 80 条</p>
+        </div>
+        <div class="filters">
+          <select id="detailPlatform" aria-label="平台筛选">
+            <option value="all">两家</option>
+            <option value="WorkBuddy">WorkBuddy</option>
+            <option value="Trae">Trae</option>
+          </select>
+          <input id="detailSearch" type="search" placeholder="搜会话 / 模型 / 项目" aria-label="搜索明细">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>时间</th><th>平台</th><th>会话 / 输入预览</th><th>模型</th><th>项目</th><th class="num">积分</th></tr></thead>
+          <tbody id="detailBody"></tbody>
+        </table>
+      </div>
+      <div id="detailEmpty" class="empty" hidden>没有匹配的记录。</div>
+    </div>
+  </section>
+
+  <!-- ============================ 标签 2：到期预警 ============================ -->
+  <section id="tab-alert" class="tab-panel" hidden>
+    <div id="alertBanner" class="banner"></div>
+    <div id="balanceCards" class="grid-2"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>未来到期分布</h2>
+          <p class="card-note">按到期日汇总「还有余额」的批次；柱色取当天最急的等级</p>
+        </div>
+        <div class="seg" id="expirySeg">
+          <button type="button" data-days="14" class="on">14 天</button>
+          <button type="button" data-days="30">30 天</button>
+          <button type="button" data-days="90">90 天</button>
+        </div>
+      </div>
+      <div id="expiryChart" class="chart"></div>
+      <div class="legend">
+        <span><i class="sw sw-urgent"></i> 3 天内</span>
+        <span><i class="sw sw-warn"></i> 7 天内</span>
+        <span><i class="sw sw-normal"></i> 更晚</span>
+        <span class="legend-note" id="expiryNote"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>预警清单 <span class="h2-note" id="alertCount"></span></h2>
+          <p class="card-note">跨平台按到期时间排序，先花最上面那笔</p>
+        </div>
+        <div class="filters">
+          <select id="alertLevel" aria-label="等级筛选">
+            <option value="all">全部等级</option>
+            <option value="urgent">紧急 / 已过期</option>
+            <option value="warn">仅提醒</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>等级</th><th>平台</th><th>包名</th><th>类型</th><th>到期时间</th><th class="num">剩余</th><th class="num">还剩</th></tr></thead>
+          <tbody id="alertBody"></tbody>
+        </table>
+      </div>
+      <div id="alertEmpty" class="empty" hidden>窗口内没有需要关注的批次，挺好。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>逐批明细 <span class="h2-note" id="batchCount"></span></h2>
+          <p class="card-note">只看「还有余额且未过期」的批次，明细已与汇总校平</p>
+        </div>
+        <div class="filters">
+          <select id="batchPlatform" aria-label="平台筛选">
+            <option value="all">两家</option>
+            <option value="WorkBuddy">WorkBuddy</option>
+            <option value="Trae">Trae</option>
+          </select>
+          <input id="batchSearch" type="search" placeholder="搜包名 / 发放原因" aria-label="搜索逐批明细">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>到期时间</th><th>等级</th><th>平台</th><th>包名</th><th>类型</th><th class="num">剩余</th><th class="num">本批额度</th></tr></thead>
+          <tbody id="batchBody"></tbody>
+        </table>
+      </div>
+      <div id="batchEmpty" class="empty" hidden>没有匹配的批次。</div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>数据来自 <code>usage-data.js</code> · <code>trae-data.js</code> · <code>credits-data.js</code>，
+      全部由本仓库的三个 Python 脚本在本机生成；页面不联网、不上传、不含任何凭证。</p>
+    <p>「已经花了多少」是消耗流水，「还剩多少」是余额快照 —— 两本账口径不同，数字不必互相加减。</p>
+  </footer>
+</div>
+
+<!-- 数据文件用 <script> 直接挂到 window，file:// 下也不会撞 fetch 的跨域限制。
+     缺哪一份都只是对应变量为 undefined，页面会降级显示，不会白屏。 -->
+<script src="../usage-data.js"></script>
+<script src="../trae-data.js"></script>
+<script src="../credits-data.js"></script>
+<script src="report.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
