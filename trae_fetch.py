@@ -5,11 +5,15 @@ Trae 用量抓取（免手动复制 token）
 自动从 Trae 客户端的本地落盘里找到凭证，调用官方用量接口，导出看板数据。
 
 凭证来源（脚本全部扫描后**逐个实测**再选用）：
-  ⭐ D. `logs/<会话>/Modular/ai-agent_*_stdout.log` 里的 `BootUserInfo.token`
-     —— **当前主力来源**。每次 AI 会话启动，agent 进程会打印一行
-     `user_info: Some(BootUserInfo { token: "..." })`，**没有掩码**。
-     payload 里 `source=refresh_token`、14 天有效期，
-     实测**能直接调通账单接口**（header 用 `Authorization: Cloud-IDE-JWT <token>`）。
+  ⭐ E. `User/globalStorage/storage.json` 里加密的 `iCubeAuthInfo://*`
+     —— **当前主力来源**（2026-10-14 打通）。值是
+     base64(6B 头 + 32B 密钥材料 + AES-128-CBC 密文)，
+     明文 = 64B SHA-512 校验和 + JSON 正文，里面有 14 天长效的 token。
+     解 AES 需要自备常量表（见 trae_crypto_table.py.example）；没有则整条跳过、不报错。
+     客户端只要登录着，每次启动/换发登录态都会自动重写它。
+  D. `logs/<会话>/Modular/ai-agent_*_stdout.log` 里的 `BootUserInfo.token`
+     —— 2026-10-12 曾短暂打通，但**2026-10-11 16:37 起这些日志全是 0 字节**，
+        旧日志目录也会被客户端定期清理 ⇒ 现已失效，仅保留为候选防万一。
   A. 客户端 logs/*/main.log 里的登录态 access token —— 14 天
      （⚠️ 2026-10-11 起新版日志里**只写 `******` 占位**，这条来源实际已失效）
   B. webview leveldb 的 `Cloud-IDE-Token` —— 8 小时，只在打开「套餐/用量」页时刷新
@@ -25,21 +29,11 @@ Trae 用量抓取（免手动复制 token）
    客户端目录名可能再变，所以**不再硬编码目录**，改成扫 %APPDATA% / %LOCALAPPDATA%
    下所有「长得像 Trae 客户端数据目录」的文件夹（含 logs / Partitions / Preferences / Local State）。
 
-🟢 2026-10-12 打通记录（D 是怎么找到的）：
-   10-11 的结论「磁盘上拿不到主凭证」其实是**漏了一类文件** ——
-   AI agent 进程的 stdout 日志在 `logs/<会话>/Modular/ai-agent_*_stdout.log`，
-   比 `logs/<会话>/*.log` 深一层，原先的 glob 没覆盖到。
-   是靠客户端日志里露出的两个独特 ID（`ClientID` / `BoundDeviceID`）反查整个
-   客户端目录才翻出来的。所以：**以后 Trae 又采不到数时，先搜 ai-agent 的 stdout 日志。**
-   · 账单接口**必须**用 `Authorization: Cloud-IDE-JWT <token>`；
-     `x-cloudide-token` 只对 /cloudide/* 类接口有效，对 /trae/api/*/pay/* 一律 401。
-   · **重登客户端没用** —— 它只刷新 C 那种 temp token（重登后签发时间确实变了，
-     但账单接口依旧 401）。
-   · 也试过借浏览器（Edge）登录态，全部行不通：cookie 是 v20（App-Bound 加密）解不开；
-     而 Edge 从 136 版起禁止在**默认** user-data-dir 上开远程调试
-     （`--remote-debugging-port` 与 `--remote-debugging-pipe` 都被拒），
-     用 profile 副本 / junction 又会因为 App-Bound 的熵包含原始路径而解不开密钥。
-     ⇒ **不用动浏览器，D 这条路就够。**
+📌 哪天突然抓不到数了，先跑 `python trae_fetch.py --check`：
+   它会逐个打印候选凭证的过期状态 + 接口实测结果 + 实际选用哪个。
+   最常见的原因是没自备 trae_crypto_table.py（E 类被整条跳过）—— 按 README 补上即可。
+   账单接口**必须**用 `Authorization: Cloud-IDE-JWT <token>`；
+   `x-cloudide-token` 只对 /cloudide/* 类接口有效，对 /trae/api/*/pay/* 一律 401。
 
 用法：
   python trae_fetch.py                # 拉取并写入 trae-data.js
@@ -61,7 +55,6 @@ from datetime import datetime
 
 # ---------------------------------------------------------------- 配置
 # 明确兜底的目录（自动发现之外的保底项；不存在会被跳过）
-#
 # ⚠️ 别把 `C:\Users\<用户名>\AppData\Roaming\...` 写死在这里：
 #    一是换台机器 / 换个用户名就失效，二是会把本机用户名提交进仓库。
 #    改成从 APPDATA / LOCALAPPDATA 环境变量拼，同一份代码谁都能跑。
@@ -96,11 +89,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_JS = os.path.join(HERE, "trae-data.js")
 
 JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}")
-# ⭐ 2026-10-12 打通的关键：新版客户端把 main.log 里的 token 全掩码成 ******，
-#    但 **AI agent 进程的 stdout 日志没掩码** —— 每次 AI 会话启动都会打印一行
-#    `user_info: Some(BootUserInfo { token: "..." })`。
-#    这个 token 的 payload 里 source=refresh_token、14 天有效期，
-#    实测**能直接调通账单接口**，是当前的主力凭证来源（见 README）。
+# 2026-10-12 曾靠它打通：新版客户端把 main.log 里的 token 全掩码成 ******，
+# 但 AI agent 的 stdout 日志没掩码 —— 每次会话启动会打印
+# `user_info: Some(BootUserInfo { token: "..." })`（source=refresh_token、14 天）。
+# ⚠️ 2026-10-14 起已失效：这些 stdout 日志变成 0 字节、旧目录被定期清理。
+#    保留正则只为「客户端又改回明文」的万一情况，主力来源现在是 E 类加密 UserStorage。
 BOOT_TOKEN_RE = re.compile(rb'BootUserInfo\s*\{[^{}]{0,400}?token:\s*"([^"]+)"')
 
 # 判定「这是个 Trae 客户端数据目录」的标志文件
@@ -504,22 +497,16 @@ def verify_token(token, timeout=20):
     用最轻的接口（套餐积分状态）探一下：200 表示可用，401 表示不可用。
     ⚠️ 这一步很关键：新版客户端写的 `trae-jwt-token` 看着像凭证，
        但实测对账单接口一律 401；只按 exp 选会把这种「假凭证」选上来。
+    ⚠️ 2026-11-05：改走 api_post（带退避重试）。否则服务端偶发一次 400 就会
+       把「其实可用」的凭证误判成失效 → 整个源报「凭证被拒」。
     返回 (是否可用, 状态码/说明)。
     """
-    url = API_HOST + API_CREDITS
-    data = json.dumps({}).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json, text/plain, */*")
-    req.add_header("Authorization", "Cloud-IDE-JWT " + token)
-    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status == 200, "HTTP %s" % r.status
-    except urllib.error.HTTPError as e:
-        return False, "HTTP %s" % e.code
-    except Exception as e:
-        return False, "异常 %s" % str(e)[:60]
+    status, _ = api_post(API_CREDITS, token, {}, retries=1)
+    if status == 200:
+        return True, "HTTP 200"
+    if status == 0:
+        return False, "网络异常"
+    return False, "HTTP %s" % status
 
 
 def check_login_state(token, timeout=15):
@@ -559,8 +546,10 @@ def alive_candidates():
     """
     返回「未过期」的候选，按 (boot, exp) 从新到旧排序。不做网络实测（省时）。
 
-    boot 优先：来自 AI agent 日志的 refresh_token 才是能调账单接口的那种，
-    先实测它就能少打几次无用的 401 请求。
+    历史上 boot 优先，是因为 AI agent 日志里的 refresh_token 曾能调通账单接口；
+    2026-10-14 起主力凭证换成加密 UserStorage（E 类），这些日志也已失效。
+    保留这个排序只为不改旧行为：所有候选最终都要经 pick_usable_token() 逐个
+    实测接口，排序只影响「先试谁」，不影响「谁会被选中」。
     """
     cands = collect_token_candidates()
     now = datetime.now().timestamp()
@@ -582,11 +571,50 @@ def token_state(js):
 
 
 # ---------------------------------------------------------------- API
-def api_post(path, token, body=None, retries=2):
-    """POST 到 Trae API；网络抖动自动重试（指数退避）。"""
+def _log_error(line):
+    """把失败现场记到 trae_fetch-error.log（现场难复现，日志是唯一线索）。
+
+    公开版默认**不落盘**：设环境变量 TRAE_FETCH_ERROR_LOG=1 才会写文件，
+    平时失败信息只走 stderr，保持「只读、不产生额外文件」的默认行为。
+    """
+    if not os.environ.get("TRAE_FETCH_ERROR_LOG"):
+        return
+    try:
+        with open(os.path.join(HERE, "trae_fetch-error.log"), "a", encoding="utf-8") as fh:
+            fh.write("[%s] %s\n" % (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), line))
+    except Exception:
+        pass
+
+
+# 本次进程内累计的"被服务端拒绝后重试"次数。
+# 2026-11-11 加：和田遇到过一次 47.6 秒（平时只要 8 秒），22 页其实都成功了、
+# 数据也完整 —— 那多出来的 40 秒全花在下面 api_post 的退避 sleep 上，
+# 而那段原本是**静默**的：控制台只看得到总耗时，看不出是谁在等、等了几次。
+# 现在每次重试打一行 ⚠（refresh_all.py 会把带 ⚠ 的行汇总成"有 N 项带警告"），
+# 并把这个数字写进 payload.paging.retries，下次再慢就不用猜了。
+RETRY_COUNT = 0
+
+
+def api_post(path, token, body=None, retries=3, retry_on=(400, 408, 425, 429, 500, 502, 503, 504)):
+    """
+    POST 到 Trae API；网络抖动与**服务端 400** 自动重试（指数退避）。
+
+    ⚠️ 2026-11-05 加固：
+       现场抓到过 `用量接口返回 400: {"raw": ""}` —— 服务端返回 400 且**响应体是空的**，
+       同一套代码串行跑 4 次全过、并发跑偶尔翻车，属于典型的间歇性拒绝。
+       以前的处理是「一次 400 就整源失败」，于是一页倒霉就把 400 条数据的采集全废掉。
+       现在：
+         · 400/429/5xx 都进重试队列（指数退避 1.5s→3s→4.5s）；
+         · 重试仍失败 → **保留已取到的页**，标成「部分数据」，不再整源失败；
+         · 错误信息带上响应头和 body 摘要，并落到 trae_fetch-error.log，
+           下次再犯能直接看出是网关拦截还是业务校验。
+    ⚠️ 2026-11-11：重试不再静默，每次等待前打一行 ⚠ 并累计到 RETRY_COUNT。
+    """
+    global RETRY_COUNT
     url = API_HOST + path
     data = json.dumps(body or {}).encode()
     last_err = None
+    last_detail = ""
     for attempt in range(retries + 1):
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Content-Type", "application/json")
@@ -603,21 +631,46 @@ def api_post(path, token, body=None, retries=2):
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", "ignore")
             try:
-                return e.code, json.loads(raw)
+                payload = json.loads(raw)
             except Exception:
-                return e.code, {"raw": raw}
+                payload = {"raw": raw[:300]}
+            last_detail = "HTTP %s %s" % (e.code, json.dumps(payload, ensure_ascii=False)[:200])
+            if e.code in retry_on and attempt < retries:
+                import time
+                RETRY_COUNT += 1
+                wait = 1.5 * (attempt + 1)
+                # 走 stderr：refresh_all.py 会把子进程的 stdout+stderr 一起收走，
+                # 带 ⚠ 的行还会被汇总成「有 N 项带警告」，慢的时候能直接看出原因。
+                print("  ⚠ %s 返回 HTTP %s（%s），等 %.1fs 重试 %d/%d"
+                      % (path, e.code, payload.get("code", ""), wait,
+                         attempt + 1, retries),
+                      file=sys.stderr, flush=True)
+                time.sleep(wait)
+                continue
+            hdr = dict((k, v) for k, v in (e.headers or {}).items())
+            _log_error("%s %s | %s | attempt=%d/%d | body=%r | headers=%s" % (
+                "POST", path, last_detail, attempt + 1, retries + 1, raw[:300], hdr))
+            return e.code, payload
         except Exception as e:
             last_err = e
+            last_detail = "异常 %s" % str(e)[:80]
             if attempt < retries:
                 import time
-                time.sleep(2 * (attempt + 1))
-    return 0, {"error": str(last_err)}
+                RETRY_COUNT += 1
+                wait = 1.5 * (attempt + 1)
+                print("  ⚠ %s 请求异常（%s），等 %.1fs 重试 %d/%d"
+                      % (path, str(e)[:60], wait, attempt + 1, retries),
+                      file=sys.stderr, flush=True)
+                time.sleep(wait)
+    _log_error("POST %s | 最终失败 | %s" % (path, last_detail))
+    return 0, {"error": str(last_err), "detail": last_detail}
 
 
 # ⚠️ 服务端单页硬上限就是 20：page_size 传 100 会返回 HTTP 400 / code 9004
 #    （"The submitted order parameters are incorrect"）。所以只能靠翻页取全量。
 PAGE_SIZE = 20
 MAX_PAGES = 50          # 50 × 20 = 1000 条上限，足够；纯属防死循环
+PAGE_DELAY = 0.12       # 翻页之间的间隔，20 页连发太密容易被服务端当异常流量拒掉
 
 
 def fetch_usage_all(token, start, end):
@@ -627,10 +680,18 @@ def fetch_usage_all(token, start, end):
     ⚠️ 2026-10-10 修的 bug：旧版只发了一次 page_num=1，于是永远只有最近 20 条 ——
        看板因此看起来"只剩今天的数据"。接口会返回 `total`，实际数据远超 20 条。
        现在改为按 total 翻到取完；并对同一 session_id 去重（防翻页边界重叠）。
-    返回 (records_raw, total, pages, err)。
+
+    ⚠️ 2026-11-05 再修：单页失败不再整源报废。
+       现在某一页重试后仍失败 → 跳过这一页、继续翻后面的，
+       最后把「缺了几页」如实标出来（payload.partialWarning），页面照常有图看。
+       只有**一页都没取到**才算致命错误。
+    返回 (records_raw, total, pages, err, warn)。
     """
-    out, seen, err = [], set(), None
+    import time
+    out, seen, err, warn = [], set(), None, None
     total = None
+    skipped = []          # 跳过的页码
+    pages_done = 0        # 真正成功翻到第几页
     for pn in range(1, MAX_PAGES + 1):
         status, r = api_post(API_USAGE, token, {
             "start_time": start, "end_time": end,
@@ -643,17 +704,25 @@ def fetch_usage_all(token, start, end):
                 "page_size": PAGE_SIZE, "page_num": pn, "usage_type": "7",
             })
         if status == 401:
-            return out, total, pn - 1, "接口返回 401：凭证被拒（可能客户端已登出）。请打开 Trae 重新登录。"
+            return out, total, pn - 1, \
+                "接口返回 401：凭证被拒（可能客户端已登出）。请打开 Trae 重新登录。", None
         if status != 200:
-            return out, total, pn - 1, "用量接口返回 %s：%s" % (
-                status, json.dumps(r, ensure_ascii=False)[:200])
+            # 这一页暂时拿不到 → 记下来，继续翻后面的（别让一页拖垮整源）
+            skipped.append(pn)
+            if len(skipped) >= 4:      # 连丢 4 页就别翻了，基本是接口整体不可用
+                err = "用量接口连续 %d 页返回 %s：%s" % (
+                    len(skipped), status, json.dumps(r, ensure_ascii=False)[:200])
+                break
+            time.sleep(1.0)
+            continue
 
         t = r.get("total")
         if isinstance(t, int) and t > 0:
             total = t
         arr = r.get("user_usage_group_by_sessions") or []
+        pages_done = pn
         if not arr:
-            return out, total, pn - 1, None          # 到底了
+            break                                  # 到底了
         for s in arr:
             sid = s.get("session_id")
             if sid and sid in seen:
@@ -662,10 +731,17 @@ def fetch_usage_all(token, start, end):
                 seen.add(sid)
             out.append(s)
         if total is not None and len(out) >= total:
-            return out, total, pn, None               # 已取满
+            break                                    # 已取满
         if len(arr) < PAGE_SIZE:
-            return out, total, pn, None               # 最后一页不满
-    return out, total, MAX_PAGES, None                # 撞到 MAX_PAGES 上限
+            break                                    # 最后一页不满
+        time.sleep(PAGE_DELAY)                      # 别把 20 页连发太密
+
+    if skipped:
+        warn = "第 %s 页被服务端拒绝（已重试），本次少了约 %d 条记录" % (
+            "、".join(str(x) for x in skipped), len(skipped) * PAGE_SIZE)
+    if not out and err is None:
+        err = "用量接口没返回任何数据（%s）" % json.dumps(r, ensure_ascii=False)[:200]
+    return out, total, pages_done, err, warn
 
 
 
@@ -729,7 +805,7 @@ def fetch(days=90):
     now = int(datetime.now().timestamp())
     start = now - days * 86400
 
-    sessions, total, pages, err = fetch_usage_all(token, start, now)
+    sessions, total, pages, err, warn = fetch_usage_all(token, start, now)
     if err:
         return None, err
 
@@ -815,6 +891,9 @@ def fetch(days=90):
             "fetched": len(records),        # 实际取回的条数
             "pages": pages,                 # 翻了几页
             "pageSize": PAGE_SIZE,
+            "retries": RETRY_COUNT,         # 被服务端拒绝后重试的次数（慢的元凶）
+            "partial": bool(warn),          # 有页被拒 → 数据不完整
+            "warning": warn or "",          # 人话版说明
         },
         "records": records,
         "summary": {
@@ -846,6 +925,7 @@ def main():
     # errors="replace" 兜住 GBK 编不出的字符（⚠️ ✅ ❌），避免直接抛 UnicodeEncodeError。
     try:
         sys.stdout.reconfigure(errors="replace")
+        sys.stderr.reconfigure(errors="replace")
     except Exception:
         pass
 
@@ -948,6 +1028,11 @@ def main():
         print(f"  （服务端共 {pg['total']} 条，翻 {pg.get('pages')} 页取回 {pg.get('fetched')} 条）{mark}")
     else:
         print()
+    if pg.get("warning"):
+        print(f"  ⚠ {pg['warning']}")
+    if pg.get("retries"):
+        print(f"  ⚠ 本次有 {pg['retries']} 次请求被服务端拒后重试成功"
+              f"（耗时变长，数据不受影响）")
     print(f"  积分    : {s['credit']}", end="")
     if q.get("total"):
         print(f"  / 套餐 {q['total']:.0f}  ({(q.get('ratio') or 0) * 100:.2f}%)")

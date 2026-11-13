@@ -1,0 +1,7 @@
+# 批处理必须是 CRLF，cmd.exe 遇到纯 LF 可能解析出错。
+# 显式声明后，无论克隆方的 core.autocrlf 怎么设，检出时都会还原成 CRLF。
+*.bat text eol=crlf
+
+# Python / 文档按行尾自动处理即可（仓库内统一 LF，检出时按平台转换）
+*.py text
+*.md text

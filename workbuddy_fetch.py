@@ -456,7 +456,7 @@ payload = {
 }
 
 with open(OUT, "w", encoding="utf-8") as fh:
-    fh.write("// 由 build_data.py 自动生成，数据来自本机 WorkBuddy 真实使用记录\n")
+    fh.write("// 由 workbuddy_fetch.py 自动生成，数据来自本机 WorkBuddy 真实使用记录\n")
     fh.write("window.WB_USAGE = ")
     json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
     fh.write(";\n")
