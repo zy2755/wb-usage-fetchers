@@ -23,7 +23,7 @@ import sys
 import traceback
 
 APP_NAME = "积分台"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 # 与 server.py 的 SCRIPTS 一一对应（模块名 = 脚本名去掉 .py）
 MODULES = ("workbuddy_fetch", "trae_fetch", "credits_alert")
