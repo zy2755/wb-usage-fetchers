@@ -88,7 +88,7 @@ python credits_alert.py --json credits.json    # 额外导出一份 JSON
 
 | 方式 | 怎么做 | 能做什么 |
 |---|---|---|
-| **最省事：单文件 exe** | 从 [Releases](https://github.com/zy2755/wb-usage-fetchers/releases) 下 `CreditsViewer-v1.0.0.exe` 双击（程序显示名是「积分台」） | 不用装 Python，自带运行时；自动开浏览器、一键刷新 |
+| **最省事：单文件 exe** | 从 [Releases](https://github.com/zy2755/wb-usage-fetchers/releases/latest) 下最新的 `CreditsViewer-v*.exe` 双击（程序显示名是「积分台」） | 不用装 Python，自带运行时；自动开浏览器、一键刷新 |
 | **推荐：本地服务** | 双击 `start-viewer.bat`（或 `python viewer/server.py`） | 自动开浏览器、右上角「↻ 刷新数据」一键重跑三个脚本 |
 | 直接看数据 | 双击 `viewer/index.html`（`file://`） | 图表、表格全部照常可用；刷新按钮自动隐藏，改完数据按 F5 |
 
@@ -145,7 +145,8 @@ exe 会**把自己再拉起一遍**（内部命令 `--run <模块>`）当独立�
 
 📌 发 Releases 时注意：GitHub 会**把非 ASCII 的附件名改成 `default.exe`**
 （`gh release upload` 和 REST 接口都一样）。所以本仓库的 Release 附件叫
-`CreditsViewer-v1.0.0.exe`，本地构建产物仍是 `dist\积分台.exe`，两者只是文件名不同。
+`CreditsViewer-v1.0.1.exe` 这种 ASCII 名，本地构建产物仍是 `dist\积分台.exe`，
+两者只是文件名不同。
 
 ### 页面里有什么
 
