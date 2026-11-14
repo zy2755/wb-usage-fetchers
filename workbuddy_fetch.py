@@ -4,12 +4,17 @@ WorkBuddy 用量数据提取脚本
 ============================
 数据来源（全部为 WorkBuddy 本机真实落盘数据）：
   1. ~/.workbuddy/projects/**/*.jsonl   —— 会话转录，含每次模型调用的 token 级用量
-     providerData.usage = {inputTokens, outputTokens, totalTokens,
-                           inputTokensDetails:[{cached_tokens}],
-                           outputTokensDetails:[{reasoning_tokens}]}
+     providerData.usage    = {inputTokens, outputTokens, totalTokens,
+                              inputTokensDetails:[{cached_tokens}],
+                              outputTokensDetails:[{reasoning_tokens}]}
+     providerData.rawUsage = {prompt_tokens, completion_tokens, total_tokens, credit, ...}
+     rawUsage.credit 是「这一笔模型调用实际扣的积分」，逐笔累加即该轮积分。
   2. ~/.workbuddy/workbuddy.db 的 session_usage / sessions 表
      session_usage.credit_json = {conversationRequestId: 积分}  —— 积分账本
      sessions                  = 会话标题 / 项目路径 / 模型 / 模式
+
+积分口径：账本优先，账本完全没有的轮次才用转录逐笔积分补上（字段
+creditFromTranscript），绝不反过来覆盖账本。2026-11-15 起不再扫运行日志。
 
 输出：usage-data.js  （挂到 window.WB_USAGE，供 index.html 直接 <script> 加载，
      避免 file:// 下的 fetch 跨域限制）
@@ -221,53 +226,16 @@ if os.path.exists(DB):
                 pass
     con.close()
 
-# --------------------------------------- 1b. 运行日志里的积分（账本兜底）
-# 平台还会把「这一轮扣了多少积分」打在会话日志里，一行一次模型调用：
-#   [SessionManager][credit] Credit received: rootRequestId=<32位>, source=..., credit=1.23
+# --------------------------------------- 1b. 积分兜底源：会话转录（旧日志法已退休）
+# 旧做法：扫 ~/.workbuddy/logs/**/*.log 里的
+#   [SessionManager][credit] Credit received: rootRequestId=..., credit=1.23
+# 2026-11-15 实测已完全失效：客户端定期清理历史日志，现存日志只剩
+# source=response_done / credit=undefined 的重复行（脚本本来就要跳过它们防重复计数），
+# 这一级兜底实际补回 0 轮 0 分；看板因此有 317 轮显示 0 分、少算 1336.65 分。
 #
-# 为什么需要它：只有这一轮带了 usage.cost 时，客户端才写本地账本
-# session_usage.credit_json。所以存在「平台确实扣了积分、本地账本却没有」的轮次
-# —— 2026-10-03 实测 space-bunny 的全部 10 轮都是这样，看板一律显示「未计费」，
-# 而日志里明明记着扣了多少。
-#
-# 可靠性对照（2026-10-03 实测）：账本 ∩ 日志 = 151 条，其中 110 条数值**完全一致**，
-# 仅 1 条日志偏高 2.63 分；但也有 92 条账本有、日志没有。
-# ⇒ 结论：**日志只能当「账本缺失轮次」的下限兜底，不能反过来覆盖账本**。
-LOG_ROOT = os.path.join(WB, "logs")
-_CREDIT_MARK = b"[SessionManager][credit] Credit received:"
-_CREDIT_RE = re.compile(
-    r"\[SessionManager\]\[credit\] Credit received: rootRequestId=(\w+), "
-    r"source=\w+, credit=(\S+)")
-credit_log = {}      # conversationRequestId -> 日志累计积分
-_log_files = 0
-
-if os.path.isdir(LOG_ROOT):
-    for path in glob.glob(os.path.join(LOG_ROOT, "**", "*.log"), recursive=True):
-        try:
-            if os.path.getsize(path) > 400 * 1024 * 1024:
-                continue
-            with open(path, "rb") as fh:
-                blob = fh.read()
-        except Exception:
-            continue
-        # 先二进制粗筛（1.6GB 全量约 2 秒），没命中就不解码
-        if _CREDIT_MARK not in blob:
-            continue
-        _log_files += 1
-        for line in blob.decode("utf-8", "replace").splitlines():
-            if "[SessionManager][credit]" not in line:
-                continue
-            m = _CREDIT_RE.search(line)
-            if not m:
-                continue
-            v = m.group(2)
-            # response_done 那一遍是 undefined，重复计入会翻倍，必须跳过
-            if v in ("undefined", "null", ""):
-                continue
-            try:
-                credit_log[m.group(1)] = credit_log.get(m.group(1), 0.0) + float(v)
-            except ValueError:
-                pass
+# 现在改从会话转录的 providerData.rawUsage.credit 取「逐次调用积分」，
+# 在第 2 段扫 JSONL 时按 requestId 累加（字段 creditTranscript）。
+# 口径不变：账本优先，转录只补「账本完全没有」的轮次，绝不覆盖账本。
 
 # ------------------------------------------------- 2. 读会话转录，逐次调用汇总
 # 同一 conversationRequestId 下会有多次模型调用（工具循环），
@@ -275,6 +243,7 @@ if os.path.isdir(LOG_ROOT):
 groups = collections.defaultdict(lambda: {
     "inputTokens": 0, "outputTokens": 0, "totalTokens": 0,
     "cachedTokens": 0, "reasoningTokens": 0, "calls": 0,
+    "creditTranscript": 0.0,   # 该轮所有模型调用的 rawUsage.credit 之和
     "ts": None, "sessionId": None, "model": None, "requestId": None,
 })
 
@@ -345,6 +314,14 @@ for path in glob.glob(PROJ_GLOB, recursive=True):
         if ts and (g["ts"] is None or ts < g["ts"]):
             g["ts"] = ts
 
+        # 逐次调用积分：rawUsage.credit 是服务端这一笔模型调用实际扣的分。
+        # 同一轮里工具循环会调用模型多次，累加起来才是这一轮的积分。
+        # 老版本（9 月 hy3/hy4-preview）这个字段全为 0，保持 0 即可。
+        ru = pd.get("rawUsage") or {}
+        c = ru.get("credit") if isinstance(ru, dict) else None
+        if isinstance(c, (int, float)) and c > 0:
+            g["creditTranscript"] += float(c)
+
         itd = u.get("inputTokensDetails") or [{}]
         otd = u.get("outputTokensDetails") or [{}]
         g["inputTokens"] += u.get("inputTokens") or 0
@@ -386,13 +363,14 @@ for rid, g in groups.items():
     if not project:
         project = proj_label(tr_cwd.get(sid, ""))
 
-    # 积分三级来源：官方账本 -> 运行日志兜底 -> 未计费
-    # 日志兜底只在账本完全没有这一轮时启用，绝不覆盖账本（账本更准，但会漏轮次）
+    # 积分两级来源：官方账本 -> 会话转录逐笔兜底 -> 未计费
+    # 转录只在账本完全没有这一轮时启用，绝不覆盖账本。
+    # 2026-11-15 实测：账本 905 轮；转录另覆盖 486 轮，其中 317 轮确实扣了分。
     cr = credit.get(rid)
-    from_log = False
-    if cr is None:
-        cr = credit_log.get(rid)
-        from_log = cr is not None
+    from_transcript = False
+    if cr is None and g["creditTranscript"] > 0:
+        cr = g["creditTranscript"]
+        from_transcript = True
 
     records.append({
         "ts": int(g["ts"]),
@@ -415,8 +393,8 @@ for rid, g in groups.items():
         "reasoningTokens": g["reasoningTokens"],
         "credit": round(cr or 0.0, 4),
         "hasCredit": rid in credit,
-        # 积分是否取自运行日志（平台没写本地账本）——看板据此标注来源
-        "creditFromLog": from_log,
+        # 积分是否取自会话转录（平台没写本地账本）——看板据此标注来源
+        "creditFromTranscript": from_transcript,
         "contextUsed": ctx_used.get(sid),
         "contextSize": ctx_size.get(sid),
         # 标题/项目名是否为转录兜底得来的（看板据此弱化显示，提醒是推断值）
@@ -481,17 +459,17 @@ if _guess:
     for _sid, _nm in sorted(_guess.items(), key=lambda x: x[1]):
         print("   - %s" % _nm)
 
-# 积分兜底情况：账本漏记的轮次有多少、从日志里补回多少分
-_dash = [r for r in records if r["creditFromLog"]]
+# 积分兜底情况：账本漏记的轮次有多少、从会话转录补回多少分
+_dash = [r for r in records if r["creditFromTranscript"]]
 if _dash:
     _ledger_sum = sum(r["credit"] for r in records if r["hasCredit"])
-    _log_sum = sum(r["credit"] for r in _dash)
+    _tr_sum = sum(r["credit"] for r in _dash)
     _by_sess = collections.defaultdict(lambda: [0, 0.0])
     for r in _dash:
         _by_sess[r["session"]][0] += 1
         _by_sess[r["session"]][1] += r["credit"]
-    print("积分兜底: 扫描 %d 个含积分记录的日志文件，%d 轮账本漏记、从日志补回 %s 积分"
-          % (_log_files, len(_dash), round(_log_sum, 2)))
+    print("积分兜底: %d 轮账本漏记、从会话转录补回 %s 积分"
+          % (len(_dash), round(_tr_sum, 2)))
     print("          账本自身记录 %.2f 分，合并后总计 %.2f 分"
           % (_ledger_sum, total_credit))
     for _nm, (_n, _v) in sorted(_by_sess.items(), key=lambda x: -x[1][1])[:8]:
